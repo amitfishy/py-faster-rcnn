@@ -126,7 +126,7 @@ def im_detect(net, im, boxes=None):
     # on the unique subset.
     if cfg.DEDUP_BOXES > 0 and not cfg.TEST.HAS_RPN:
         v = np.array([1, 1e3, 1e6, 1e9, 1e12])
-        hashes = np.round(blobs['rois'] * cfg.DEDUP_BOXES).dot(v)
+        hashes = np.round(blobs['rois'] * cfg.DEDUP_BOXES).dot(v).astype(np.int)
         _, index, inv_index = np.unique(hashes, return_index=True,
                                         return_inverse=True)
         blobs['rois'] = blobs['rois'][index, :]
@@ -224,7 +224,7 @@ def apply_nms(all_boxes, thresh):
             nms_boxes[cls_ind][im_ind] = dets[keep, :].copy()
     return nms_boxes
 
-def test_net(net, imdb, max_per_image=100, thresh=0.05, vis=False):
+def test_net(net, imdb, max_per_image=100, thresh=0.01, vis=False):
     """Test a Fast R-CNN network on an image database."""
     num_images = len(imdb.image_index)
     # all detections are collected into:
@@ -233,14 +233,15 @@ def test_net(net, imdb, max_per_image=100, thresh=0.05, vis=False):
     all_boxes = [[[] for _ in xrange(num_images)]
                  for _ in xrange(imdb.num_classes)]
 
-    output_dir = get_output_dir(imdb, net)
+    #output_dir = get_output_dir(imdb, net)
 
     # timers
-    _t = {'im_detect' : Timer(), 'misc' : Timer()}
+    _t = {'im_detect' : Timer(), 'misc' : Timer(), 'total' : Timer()}
 
     if not cfg.TEST.HAS_RPN:
         roidb = imdb.roidb
 
+    _t['total'].tic()
     for i in xrange(num_images):
         # filter out any ground truth boxes
         if cfg.TEST.HAS_RPN:
@@ -261,6 +262,7 @@ def test_net(net, imdb, max_per_image=100, thresh=0.05, vis=False):
         _t['misc'].tic()
         # skip j = 0, because it's the background class
         for j in xrange(1, imdb.num_classes):
+            #print scores[:, j]
             inds = np.where(scores[:, j] > thresh)[0]
             cls_scores = scores[inds, j]
             cls_boxes = boxes[inds, j*4:(j+1)*4]
@@ -283,13 +285,46 @@ def test_net(net, imdb, max_per_image=100, thresh=0.05, vis=False):
                     all_boxes[j][i] = all_boxes[j][i][keep, :]
         _t['misc'].toc()
 
-        print 'im_detect: {:d}/{:d} {:.3f}s {:.3f}s' \
-              .format(i + 1, num_images, _t['im_detect'].average_time,
-                      _t['misc'].average_time)
+        print 'faster_rcnn - im_detect: {:d}/{:d} {:.3f}s {:.3f}s'.format(i + 1, num_images, _t['im_detect'].average_time, _t['misc'].average_time)
+    _t['total'].toc()
 
-    det_file = os.path.join(output_dir, 'detections.pkl')
-    with open(det_file, 'wb') as f:
-        cPickle.dump(all_boxes, f, cPickle.HIGHEST_PROTOCOL)
+    print 'faster_rcnn - Total Detection Time: {:.3f}s'.format(_t['total'].average_time)
 
     print 'Evaluating detections'
-    imdb.evaluate_detections(all_boxes, output_dir)
+    mAP, aps = imdb.evaluate_detections(all_boxes)
+    return  mAP, aps
+
+def detect_image_online(net, im, classnamesfile, det_thresh, nms_thresh):
+    classname_list = ['__background__']
+    with open(classnamesfile, 'r') as c_n_f:
+        for classname in c_n_f.readlines():
+            classname_list.append(classname.strip('\n'))
+
+    all_dets = []
+
+    # timers
+    _t = {'im_detect' : Timer(), 'misc' : Timer()}
+
+    _t['im_detect'].tic()
+    scores, boxes = im_detect(net, im, None)
+    _t['im_detect'].toc()
+    
+
+    _t['misc'].tic()
+    for j in xrange(1, len(classname_list)):
+        inds = np.where(scores[:, j] > det_thresh)[0]
+        cls_scores = scores[inds, j]
+        cls_boxes = boxes[inds, j*4:(j+1)*4]
+        cls_dets = np.hstack((cls_boxes, cls_scores[:, np.newaxis])).astype(np.float32, copy=False)
+        keep = nms(cls_dets, nms_thresh)
+        cls_dets = cls_dets[keep, :]
+        
+        for det in cls_dets:
+            all_dets.append([classname_list[j], det[-1], det[0:-1].tolist()])
+
+    all_dets = sorted(all_dets, key=lambda x: -x[1])
+    _t['misc'].toc()
+
+    print 'Time taken:- Detection: {:.3f}s Misc: {:.3f}s'.format(_t['im_detect'].average_time, _t['misc'].average_time)
+
+    return all_dets

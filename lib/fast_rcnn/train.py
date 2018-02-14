@@ -23,10 +23,11 @@ class SolverWrapper(object):
     use to unnormalize the learned bounding-box regression weights.
     """
 
-    def __init__(self, solver_prototxt, roidb, output_dir,
+    def __init__(self, solver_prototxt, roidb, output_dir, output_filename,
                  pretrained_model=None):
         """Initialize the SolverWrapper."""
         self.output_dir = output_dir
+        self.output_filename = output_filename
 
         if (cfg.TRAIN.HAS_RPN and cfg.TRAIN.BBOX_REG and
             cfg.TRAIN.BBOX_NORMALIZE_TARGETS):
@@ -52,7 +53,7 @@ class SolverWrapper(object):
 
         self.solver.net.layers[0].set_roidb(roidb)
 
-    def snapshot(self):
+    def snapshot(self, max_iters):
         """Take a snapshot of the network after unnormalizing the learned
         bounding-box regression weights. This enables easy use at test-time.
         """
@@ -75,11 +76,15 @@ class SolverWrapper(object):
                     (net.params['bbox_pred'][1].data *
                      self.bbox_stds + self.bbox_means)
 
-        infix = ('_' + cfg.TRAIN.SNAPSHOT_INFIX
-                 if cfg.TRAIN.SNAPSHOT_INFIX != '' else '')
-        filename = (self.solver_param.snapshot_prefix + infix +
-                    '_iter_{:d}'.format(self.solver.iter) + '.caffemodel')
-        filename = os.path.join(self.output_dir, filename)
+        # infix = ('_' + cfg.TRAIN.SNAPSHOT_INFIX
+        #          if cfg.TRAIN.SNAPSHOT_INFIX != '' else '')
+        # filename = (self.solver_param.snapshot_prefix + infix +
+        #             '_iter_{:d}'.format(self.solver.iter) + '.caffemodel')
+        # filename = os.path.join(self.output_dir, filename)
+        if self.solver.iter == max_iters:
+            filename = os.path.join(self.output_dir, self.output_filename)
+        else:
+            filename = os.path.join(self.output_dir, str(self.solver.iter) + self.output_filename)
 
         net.save(str(filename))
         print 'Wrote snapshot to: {:s}'.format(filename)
@@ -88,6 +93,7 @@ class SolverWrapper(object):
             # restore net to original state
             net.params['bbox_pred'][0].data[...] = orig_0
             net.params['bbox_pred'][1].data[...] = orig_1
+        
         return filename
 
     def train_model(self, max_iters):
@@ -105,10 +111,10 @@ class SolverWrapper(object):
 
             if self.solver.iter % cfg.TRAIN.SNAPSHOT_ITERS == 0:
                 last_snapshot_iter = self.solver.iter
-                model_paths.append(self.snapshot())
+                model_paths.append(self.snapshot(max_iters))
 
         if last_snapshot_iter != self.solver.iter:
-            model_paths.append(self.snapshot())
+            model_paths.append(self.snapshot(max_iters))
         return model_paths
 
 def get_training_roidb(imdb):
@@ -148,12 +154,12 @@ def filter_roidb(roidb):
                                                        num, num_after)
     return filtered_roidb
 
-def train_net(solver_prototxt, roidb, output_dir,
+def train_net(solver_prototxt, roidb, output_dir, output_filename,
               pretrained_model=None, max_iters=40000):
     """Train a Fast R-CNN network."""
 
     roidb = filter_roidb(roidb)
-    sw = SolverWrapper(solver_prototxt, roidb, output_dir,
+    sw = SolverWrapper(solver_prototxt, roidb, output_dir, output_filename,
                        pretrained_model=pretrained_model)
 
     print 'Solving...'
