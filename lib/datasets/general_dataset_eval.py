@@ -112,7 +112,7 @@ def general_dataset_eval(dataset_type,
              imagesetfile,
              classname,
              sample_mode,
-             ovthresh=0.7,
+             ovthresh=0.5,
              use_07_metric=False):
     """
     Top level function that does the PASCAL VOC evaluation.
@@ -125,7 +125,7 @@ def general_dataset_eval(dataset_type,
     imagesetfile: Text file containing the list of images, one image per line.
     classname: Category name (duh)
     sample_mode: level described by dataset_type
-    ovthresh: Overlap threshold (default = 0.7)
+    ovthresh: Overlap threshold (default = 0.5)
     [use_07_metric]: Whether to use VOC07's 11 point AP computation
         (default False)
     """
